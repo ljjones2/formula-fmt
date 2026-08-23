@@ -370,6 +370,159 @@ fn is_valid_name(text: &str) -> bool {
     chars.all(|c| c.is_alphanumeric() || c == '_' || c == '.')
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::printer::render;
+
+    fn canonical(input: &str) -> String {
+        format!("={}", render(&parse(input).unwrap()))
+    }
+
+    #[test]
+    fn unary_minus_binds_tighter_than_pow() {
+        // "-2^2" is 4 in Excel, not -4: the minus only grabs its immediate
+        // operand, so the tree is (-2)^2, not -(2^2).
+        let expr = parse("-2^2").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Binary(
+                BinaryOp::Pow,
+                Box::new(Expr::Unary(UnaryOp::Neg, Box::new(Expr::Number(2.0)))),
+                Box::new(Expr::Number(2.0)),
+            )
+        );
+        assert_eq!(canonical("-2^2"), "=-2^2");
+    }
+
+    #[test]
+    fn pow_right_operand_can_be_unary() {
+        // Here the minus is the right operand of ^, so it stays there:
+        // 2^-2 is 2^(-2), not (2^-2) folded into something else.
+        let expr = parse("2^-2").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Binary(
+                BinaryOp::Pow,
+                Box::new(Expr::Number(2.0)),
+                Box::new(Expr::Unary(UnaryOp::Neg, Box::new(Expr::Number(2.0)))),
+            )
+        );
+        assert_eq!(canonical("2^-2"), "=2^-2");
+    }
+
+    #[test]
+    fn unary_minus_binds_tighter_than_percent() {
+        // "-2%" is (-2)%, not -(2%) - unary sits above percent too.
+        let expr = parse("-2%").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Unary(
+                UnaryOp::Percent,
+                Box::new(Expr::Unary(UnaryOp::Neg, Box::new(Expr::Number(2.0)))),
+            )
+        );
+    }
+
+    #[test]
+    fn percent_binds_tighter_than_pow() {
+        // "2%^3" means (2%)^3: percent grabs 2 before ^ ever sees it.
+        let expr = parse("2%^3").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Binary(
+                BinaryOp::Pow,
+                Box::new(Expr::Unary(UnaryOp::Percent, Box::new(Expr::Number(2.0)))),
+                Box::new(Expr::Number(3.0)),
+            )
+        );
+        assert_eq!(canonical("2%^3"), "=2%^3");
+    }
+
+    #[test]
+    fn multiplication_binds_tighter_than_addition() {
+        let expr = parse("2+3*4").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Binary(
+                BinaryOp::Add,
+                Box::new(Expr::Number(2.0)),
+                Box::new(Expr::Binary(
+                    BinaryOp::Mul,
+                    Box::new(Expr::Number(3.0)),
+                    Box::new(Expr::Number(4.0)),
+                )),
+            )
+        );
+        assert_eq!(canonical("2+3*4"), "=2+3*4");
+    }
+
+    #[test]
+    fn parens_reinstated_when_grouping_overrides_precedence() {
+        // The tree here has + nested inside *, so the printer must add back
+        // the parentheses or the canonical form would change meaning.
+        assert_eq!(canonical("(2+3)*4"), "=(2+3)*4");
+    }
+
+    #[test]
+    fn range_binds_tighter_than_unary_minus() {
+        let expr = parse("-A1:B2").unwrap();
+        match expr {
+            Expr::Unary(UnaryOp::Neg, inner) => {
+                assert!(matches!(*inner, Expr::Range(..)));
+            }
+            other => panic!("expected a negated range, got {:?}", other),
+        }
+        assert_eq!(canonical("-A1:B2"), "=-A1:B2");
+    }
+
+    #[test]
+    fn chained_comparisons_are_left_associative() {
+        let expr = parse("1<2=3").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Binary(
+                BinaryOp::Eq,
+                Box::new(Expr::Binary(
+                    BinaryOp::Lt,
+                    Box::new(Expr::Number(1.0)),
+                    Box::new(Expr::Number(2.0)),
+                )),
+                Box::new(Expr::Number(3.0)),
+            )
+        );
+        assert_eq!(canonical("1<2=3"), "=1<2=3");
+    }
+
+    #[test]
+    fn concat_binds_looser_than_addition_but_tighter_than_comparison() {
+        assert_eq!(canonical("1&2+3=4&5"), "=1&2+3=4&5");
+    }
+
+    #[test]
+    fn function_and_cell_names_are_canonicalized() {
+        assert_eq!(canonical("sum(a1:a10)+total"), "=SUM(A1:A10)+total");
+    }
+
+    #[test]
+    fn missing_operand_reports_position_at_end_of_input() {
+        let err = parse("1+").unwrap_err();
+        assert_eq!(err.pos, 2);
+    }
+
+    #[test]
+    fn missing_operand_before_operator_reports_operator_position() {
+        let err = parse("1+*2").unwrap_err();
+        assert_eq!(err.pos, 2);
+    }
+
+    #[test]
+    fn trailing_input_is_rejected_at_its_own_position() {
+        let err = parse("1 2").unwrap_err();
+        assert_eq!(err.pos, 2);
+    }
+}
+
 fn describe(kind: &TokenKind) -> String {
     match kind {
         TokenKind::Number(n) => n.to_string(),
