@@ -110,7 +110,7 @@ fn binary_op_name(op: &BinaryOp) -> &'static str {
 fn render_ref(r: &CellRef) -> String {
     let mut out = String::new();
     if let Some(sheet) = &r.sheet {
-        out.push_str(sheet);
+        out.push_str(&render_sheet_name(sheet));
         out.push('!');
     }
     if r.col_absolute {
@@ -122,6 +122,25 @@ fn render_ref(r: &CellRef) -> String {
     }
     out.push_str(&r.row.to_string());
     out
+}
+
+// Quotes a sheet name only when it needs it, so plain names like Sheet1
+// round-trip without picking up quotes they didn't have on the way in.
+fn render_sheet_name(name: &str) -> String {
+    if sheet_name_needs_quotes(name) {
+        format!("'{}'", name.replace('\'', "''"))
+    } else {
+        name.to_string()
+    }
+}
+
+fn sheet_name_needs_quotes(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_alphabetic() || c == '_' => {}
+        _ => return true,
+    }
+    !chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
 fn format_number(n: f64) -> String {

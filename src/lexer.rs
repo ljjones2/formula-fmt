@@ -6,6 +6,7 @@ pub enum TokenKind {
     Number(f64),
     Text(String),
     Ident(String),
+    SheetName(String),
     Plus,
     Minus,
     Star,
@@ -92,6 +93,9 @@ impl Lexer {
         if c == '"' {
             return self.lex_string(start);
         }
+        if c == '\'' {
+            return self.lex_sheet_name(start);
+        }
         if c.is_ascii_digit() || (c == '.' && matches!(self.peek_at(1), Some(d) if d.is_ascii_digit()))
         {
             return self.lex_number(start);
@@ -168,6 +172,32 @@ impl Lexer {
             }
         }
         Ok(Token { kind: TokenKind::Text(value), pos: start })
+    }
+
+    fn lex_sheet_name(&mut self, start: usize) -> Result<Token, LexError> {
+        self.pos += 1; // opening quote
+        let mut value = String::new();
+        loop {
+            match self.advance() {
+                None => {
+                    return Err(LexError {
+                        message: "unterminated sheet name".to_string(),
+                        pos: start,
+                    })
+                }
+                Some('\'') => {
+                    // a doubled quote is an escaped literal quote inside the name
+                    if self.peek() == Some('\'') {
+                        value.push('\'');
+                        self.pos += 1;
+                    } else {
+                        break;
+                    }
+                }
+                Some(c) => value.push(c),
+            }
+        }
+        Ok(Token { kind: TokenKind::SheetName(value), pos: start })
     }
 
     fn lex_number(&mut self, start: usize) -> Result<Token, LexError> {

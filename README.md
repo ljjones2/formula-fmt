@@ -56,7 +56,7 @@ hand-written lexer, parser, and JSON serializer.
 - Numbers (including scientific notation), text literals with `""`
   escaping, and `TRUE`/`FALSE`
 - Cell references, with or without `$`, including a sheet prefix
-  (`Sheet1!A1`)
+  (`Sheet1!A1`, or `'My Sheet'!A1` when the name needs quoting)
 - Ranges (`A1:B10`), arithmetic (`+ - * / ^`), concatenation (`&`),
   comparisons (`= <> < <= > >=`), unary `+`/`-`, and postfix `%`
 - Function calls with comma-separated arguments
@@ -64,7 +64,6 @@ hand-written lexer, parser, and JSON serializer.
 
 ## What's not there yet
 
-- Quoted sheet names (`'My Sheet'!A1`)
 - The union (`,`) and intersect (space) reference operators
 - Error literals (`#REF!`, `#VALUE!`, ...)
 - Array literals (`{1,2;3,4}`)

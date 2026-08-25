@@ -245,6 +245,11 @@ impl Parser {
                 self.advance();
                 self.parse_ident_expr(name, token.pos)
             }
+            TokenKind::SheetName(name) => {
+                self.advance();
+                self.expect(TokenKind::Bang)?;
+                self.parse_reference_after_bang(name)
+            }
             _ => Err(ParseError {
                 message: format!("expected a value, found '{}'", describe(&token.kind)),
                 pos: token.pos,
@@ -272,26 +277,7 @@ impl Parser {
 
         if self.peek().kind == TokenKind::Bang {
             self.advance();
-            let cell_token = self.advance();
-            let cell_name = match cell_token.kind {
-                TokenKind::Ident(n) => n,
-                _ => {
-                    return Err(ParseError {
-                        message: "expected a cell reference after '!'".to_string(),
-                        pos: cell_token.pos,
-                    })
-                }
-            };
-            return match parse_cell_ref(&cell_name) {
-                Some(mut cell) => {
-                    cell.sheet = Some(name);
-                    Ok(Expr::Reference(cell))
-                }
-                None => Err(ParseError {
-                    message: format!("'{}' is not a valid cell reference", cell_name),
-                    pos: cell_token.pos,
-                }),
-            };
+            return self.parse_reference_after_bang(name);
         }
 
         let upper = name.to_ascii_uppercase();
@@ -308,6 +294,31 @@ impl Parser {
             None => Err(ParseError {
                 message: format!("'{}' is not a valid reference or name", name),
                 pos,
+            }),
+        }
+    }
+
+    // Called just after a '!' has been consumed, with the sheet name (quoted
+    // or bare) already parsed. Only a plain cell reference can follow.
+    fn parse_reference_after_bang(&mut self, sheet: String) -> Result<Expr, ParseError> {
+        let cell_token = self.advance();
+        let cell_name = match cell_token.kind {
+            TokenKind::Ident(n) => n,
+            _ => {
+                return Err(ParseError {
+                    message: "expected a cell reference after '!'".to_string(),
+                    pos: cell_token.pos,
+                })
+            }
+        };
+        match parse_cell_ref(&cell_name) {
+            Some(mut cell) => {
+                cell.sheet = Some(sheet);
+                Ok(Expr::Reference(cell))
+            }
+            None => Err(ParseError {
+                message: format!("'{}' is not a valid cell reference", cell_name),
+                pos: cell_token.pos,
             }),
         }
     }
@@ -505,6 +516,44 @@ mod tests {
     }
 
     #[test]
+    fn bare_sheet_name_round_trips_without_quotes() {
+        assert_eq!(canonical("Sheet1!A1"), "=Sheet1!A1");
+    }
+
+    #[test]
+    fn quoted_sheet_name_is_required_for_spaces() {
+        let expr = parse("'My Sheet'!A1").unwrap();
+        match expr {
+            Expr::Reference(cell) => assert_eq!(cell.sheet.as_deref(), Some("My Sheet")),
+            other => panic!("expected a reference, got {:?}", other),
+        }
+        assert_eq!(canonical("'My Sheet'!A1"), "='My Sheet'!A1");
+    }
+
+    #[test]
+    fn quoted_sheet_name_unescapes_doubled_quotes() {
+        let expr = parse("'O''Brien''s Sheet'!A1").unwrap();
+        match expr {
+            Expr::Reference(cell) => assert_eq!(cell.sheet.as_deref(), Some("O'Brien's Sheet")),
+            other => panic!("expected a reference, got {:?}", other),
+        }
+        assert_eq!(canonical("'O''Brien''s Sheet'!A1"), "='O''Brien''s Sheet'!A1");
+    }
+
+    #[test]
+    fn plain_sheet_name_does_not_pick_up_quotes_it_did_not_have() {
+        // a sheet name that happens to be quoted in the input but doesn't
+        // need it should print back without the quotes
+        assert_eq!(canonical("'Sheet1'!A1"), "=Sheet1!A1");
+    }
+
+    #[test]
+    fn unterminated_sheet_name_reports_opening_quote_position() {
+        let err = parse("'My Sheet!A1").unwrap_err();
+        assert_eq!(err.pos, 0);
+    }
+
+    #[test]
     fn missing_operand_reports_position_at_end_of_input() {
         let err = parse("1+").unwrap_err();
         assert_eq!(err.pos, 2);
@@ -528,6 +577,7 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::Number(n) => n.to_string(),
         TokenKind::Text(s) => format!("\"{}\"", s),
         TokenKind::Ident(s) => s.clone(),
+        TokenKind::SheetName(s) => format!("'{}'", s),
         TokenKind::Plus => "+".to_string(),
         TokenKind::Minus => "-".to_string(),
         TokenKind::Star => "*".to_string(),
