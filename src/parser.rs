@@ -50,6 +50,7 @@ pub enum Expr {
     Name(String),
     Reference(CellRef),
     Range(Box<Expr>, Box<Expr>),
+    Union(Vec<Expr>),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
@@ -237,9 +238,22 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.advance();
-                let inner = self.parse_expr()?;
-                self.expect(TokenKind::RParen)?;
-                Ok(inner)
+                let first = self.parse_expr()?;
+                if self.peek().kind == TokenKind::Comma {
+                    // A parenthesized comma list is the union reference operator,
+                    // e.g. (A1:A2,B1:B2) - distinct from a function's argument
+                    // list, which never routes through here.
+                    let mut items = vec![first];
+                    while self.peek().kind == TokenKind::Comma {
+                        self.advance();
+                        items.push(self.parse_expr()?);
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    Ok(Expr::Union(items))
+                } else {
+                    self.expect(TokenKind::RParen)?;
+                    Ok(first)
+                }
             }
             TokenKind::Ident(name) => {
                 self.advance();
@@ -569,6 +583,47 @@ mod tests {
     fn trailing_input_is_rejected_at_its_own_position() {
         let err = parse("1 2").unwrap_err();
         assert_eq!(err.pos, 2);
+    }
+
+    #[test]
+    fn parenthesized_comma_list_is_a_union() {
+        let expr = parse("(A1:A2,B1:B2)").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Union(vec![
+                Expr::Range(
+                    Box::new(Expr::Reference(parse_cell_ref("A1").unwrap())),
+                    Box::new(Expr::Reference(parse_cell_ref("A2").unwrap())),
+                ),
+                Expr::Range(
+                    Box::new(Expr::Reference(parse_cell_ref("B1").unwrap())),
+                    Box::new(Expr::Reference(parse_cell_ref("B2").unwrap())),
+                ),
+            ])
+        );
+        assert_eq!(canonical("(A1:A2,B1:B2)"), "=(A1:A2, B1:B2)");
+    }
+
+    #[test]
+    fn union_can_appear_as_a_function_argument() {
+        assert_eq!(canonical("sum((a1:a2,b1:b2))"), "=SUM((A1:A2, B1:B2))");
+    }
+
+    #[test]
+    fn union_of_more_than_two_members_round_trips() {
+        assert_eq!(canonical("(A1,B1,C1)"), "=(A1, B1, C1)");
+    }
+
+    #[test]
+    fn plain_parens_without_a_comma_stay_a_grouping_not_a_union() {
+        let expr = parse("(A1)").unwrap();
+        assert_eq!(expr, Expr::Reference(parse_cell_ref("A1").unwrap()));
+    }
+
+    #[test]
+    fn union_with_trailing_comma_reports_missing_operand() {
+        let err = parse("(A1,)").unwrap_err();
+        assert_eq!(err.pos, 4);
     }
 }
 

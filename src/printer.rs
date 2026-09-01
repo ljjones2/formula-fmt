@@ -21,6 +21,10 @@ pub fn render(expr: &Expr) -> String {
         Expr::Name(n) => n.clone(),
         Expr::Reference(r) => render_ref(r),
         Expr::Range(a, b) => format!("{}:{}", print_child(a, 8, false), print_child(b, 8, false)),
+        Expr::Union(items) => {
+            let rendered: Vec<String> = items.iter().map(render).collect();
+            format!("({})", rendered.join(", "))
+        }
         Expr::Unary(op, inner) => match op {
             UnaryOp::Neg => format!("-{}", print_child(inner, 7, false)),
             UnaryOp::Pos => format!("+{}", print_child(inner, 7, false)),
@@ -69,6 +73,9 @@ fn precedence(expr: &Expr) -> u8 {
         Expr::Unary(UnaryOp::Percent, _) => 6,
         Expr::Unary(UnaryOp::Neg, _) | Expr::Unary(UnaryOp::Pos, _) => 7,
         Expr::Range(..) => 8,
+        // Union already renders its own enclosing parens, so it never needs
+        // another pair added by print_child.
+        Expr::Union(..) => 9,
         _ => 9,
     }
 }
@@ -201,6 +208,16 @@ fn write_json(expr: &Expr, out: &mut String) {
             out.push_str(",\"end\":");
             write_json(b, out);
             out.push('}');
+        }
+        Expr::Union(items) => {
+            out.push_str("{\"type\":\"union\",\"items\":[");
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_json(item, out);
+            }
+            out.push_str("]}");
         }
         Expr::Unary(op, inner) => {
             out.push_str("{\"type\":\"unary\",\"op\":\"");

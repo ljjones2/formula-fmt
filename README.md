@@ -59,12 +59,15 @@ hand-written lexer, parser, and JSON serializer.
   (`Sheet1!A1`, or `'My Sheet'!A1` when the name needs quoting)
 - Ranges (`A1:B10`), arithmetic (`+ - * / ^`), concatenation (`&`),
   comparisons (`= <> < <= > >=`), unary `+`/`-`, and postfix `%`
+- The union reference operator, written as a parenthesized comma list
+  (`(A1:A2,B1:B2)`), including as a function argument (`SUM((A1:A2,B1:B2))`)
 - Function calls with comma-separated arguments
 - Defined names (any identifier that isn't a valid cell reference)
 
 ## What's not there yet
 
-- The union (`,`) and intersect (space) reference operators
+- The intersect (space) reference operator - this needs the lexer to stop
+  treating all whitespace as insignificant, which the union operator didn't
 - Error literals (`#REF!`, `#VALUE!`, ...)
 - Array literals (`{1,2;3,4}`)
 - An actual evaluator - this only validates and reformats, it doesn't
