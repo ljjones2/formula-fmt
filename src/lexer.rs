@@ -32,6 +32,11 @@ pub enum TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub pos: usize,
+    // Whether whitespace separates this token from the previous one. The
+    // parser needs this to recognize the intersect reference operator,
+    // which Excel writes as a bare space between two references and which
+    // otherwise leaves no token of its own to match on.
+    pub space_before: bool,
 }
 
 #[derive(Debug)]
@@ -80,28 +85,30 @@ impl Lexer {
     }
 
     fn next_token(&mut self) -> Result<Token, LexError> {
+        let ws_start = self.pos;
         while matches!(self.peek(), Some(c) if c.is_whitespace()) {
             self.pos += 1;
         }
+        let space_before = self.pos > ws_start;
 
         let start = self.pos;
         let c = match self.peek() {
-            None => return Ok(Token { kind: TokenKind::Eof, pos: start }),
+            None => return Ok(Token { kind: TokenKind::Eof, pos: start, space_before }),
             Some(c) => c,
         };
 
         if c == '"' {
-            return self.lex_string(start);
+            return self.lex_string(start).map(|t| Token { space_before, ..t });
         }
         if c == '\'' {
-            return self.lex_sheet_name(start);
+            return self.lex_sheet_name(start).map(|t| Token { space_before, ..t });
         }
         if c.is_ascii_digit() || (c == '.' && matches!(self.peek_at(1), Some(d) if d.is_ascii_digit()))
         {
-            return self.lex_number(start);
+            return self.lex_number(start).map(|t| Token { space_before, ..t });
         }
         if c.is_alphabetic() || c == '_' || c == '$' {
-            return self.lex_ident(start);
+            return self.lex_ident(start).map(|t| Token { space_before, ..t });
         }
 
         self.pos += 1;
@@ -145,7 +152,7 @@ impl Lexer {
                 })
             }
         };
-        Ok(Token { kind, pos: start })
+        Ok(Token { kind, pos: start, space_before })
     }
 
     fn lex_string(&mut self, start: usize) -> Result<Token, LexError> {
@@ -171,7 +178,7 @@ impl Lexer {
                 Some(c) => value.push(c),
             }
         }
-        Ok(Token { kind: TokenKind::Text(value), pos: start })
+        Ok(Token { kind: TokenKind::Text(value), pos: start, space_before: false })
     }
 
     fn lex_sheet_name(&mut self, start: usize) -> Result<Token, LexError> {
@@ -197,7 +204,7 @@ impl Lexer {
                 Some(c) => value.push(c),
             }
         }
-        Ok(Token { kind: TokenKind::SheetName(value), pos: start })
+        Ok(Token { kind: TokenKind::SheetName(value), pos: start, space_before: false })
     }
 
     fn lex_number(&mut self, start: usize) -> Result<Token, LexError> {
@@ -229,7 +236,7 @@ impl Lexer {
             }
         }
         match text.parse::<f64>() {
-            Ok(value) => Ok(Token { kind: TokenKind::Number(value), pos: start }),
+            Ok(value) => Ok(Token { kind: TokenKind::Number(value), pos: start, space_before: false }),
             Err(_) => Err(LexError { message: format!("invalid number '{}'", text), pos: start }),
         }
     }
@@ -240,6 +247,6 @@ impl Lexer {
         {
             text.push(self.advance().unwrap());
         }
-        Ok(Token { kind: TokenKind::Ident(text), pos: start })
+        Ok(Token { kind: TokenKind::Ident(text), pos: start, space_before: false })
     }
 }

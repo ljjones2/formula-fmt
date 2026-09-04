@@ -20,7 +20,10 @@ pub fn render(expr: &Expr) -> String {
         }
         Expr::Name(n) => n.clone(),
         Expr::Reference(r) => render_ref(r),
-        Expr::Range(a, b) => format!("{}:{}", print_child(a, 8, false), print_child(b, 8, false)),
+        Expr::Range(a, b) => format!("{}:{}", print_child(a, 9, false), print_child(b, 9, false)),
+        Expr::Intersect(a, b) => {
+            format!("{} {}", print_child(a, 8, false), print_child(b, 8, false))
+        }
         Expr::Union(items) => {
             let rendered: Vec<String> = items.iter().map(render).collect();
             format!("({})", rendered.join(", "))
@@ -72,11 +75,12 @@ fn precedence(expr: &Expr) -> u8 {
         Expr::Binary(op, ..) => binary_precedence(op),
         Expr::Unary(UnaryOp::Percent, _) => 6,
         Expr::Unary(UnaryOp::Neg, _) | Expr::Unary(UnaryOp::Pos, _) => 7,
-        Expr::Range(..) => 8,
+        Expr::Intersect(..) => 8,
+        Expr::Range(..) => 9,
         // Union already renders its own enclosing parens, so it never needs
         // another pair added by print_child.
-        Expr::Union(..) => 9,
-        _ => 9,
+        Expr::Union(..) => 10,
+        _ => 10,
     }
 }
 
@@ -206,6 +210,13 @@ fn write_json(expr: &Expr, out: &mut String) {
             out.push_str("{\"type\":\"range\",\"start\":");
             write_json(a, out);
             out.push_str(",\"end\":");
+            write_json(b, out);
+            out.push('}');
+        }
+        Expr::Intersect(a, b) => {
+            out.push_str("{\"type\":\"intersect\",\"left\":");
+            write_json(a, out);
+            out.push_str(",\"right\":");
             write_json(b, out);
             out.push('}');
         }

@@ -7,6 +7,12 @@
 // The notable surprise (and the reason unary sits above both % and ^ here)
 // is that "=-2^2" evaluates to 4 in real spreadsheets, not -4: unary minus
 // binds tighter than exponentiation.
+//
+// The reference operators (':' range, ' ' intersect, ',' union) bind tighter
+// than everything else, including unary minus, and among themselves range
+// binds tighter than intersect. Intersect has no token of its own - it's a
+// bare space between two references - so it's recognized by checking the
+// lexer's space_before flag rather than matching a TokenKind.
 
 use crate::lexer::{Lexer, Token, TokenKind};
 
@@ -50,6 +56,7 @@ pub enum Expr {
     Name(String),
     Reference(CellRef),
     Range(Box<Expr>, Box<Expr>),
+    Intersect(Box<Expr>, Box<Expr>),
     Union(Vec<Expr>),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
@@ -210,8 +217,17 @@ impl Parser {
                 let operand = self.parse_unary()?;
                 Ok(Expr::Unary(UnaryOp::Pos, Box::new(operand)))
             }
-            _ => self.parse_range(),
+            _ => self.parse_intersect(),
         }
+    }
+
+    fn parse_intersect(&mut self) -> Result<Expr, ParseError> {
+        let mut left = self.parse_range()?;
+        while self.peek().space_before && starts_reference_operand(&self.peek().kind) {
+            let right = self.parse_range()?;
+            left = Expr::Intersect(Box::new(left), Box::new(right));
+        }
+        Ok(left)
     }
 
     fn parse_range(&mut self) -> Result<Expr, ParseError> {
@@ -384,6 +400,14 @@ fn parse_cell_ref(text: &str) -> Option<CellRef> {
     }
 
     Some(CellRef { sheet: None, col_absolute, column, row_absolute, row })
+}
+
+// Whether a token can open the right-hand operand of an intersect. Numbers
+// and text literals are deliberately excluded - they aren't references, and
+// including them would turn plain juxtaposition like "1 2" into an operator
+// instead of the trailing-input error it should stay.
+fn starts_reference_operand(kind: &TokenKind) -> bool {
+    matches!(kind, TokenKind::Ident(_) | TokenKind::SheetName(_) | TokenKind::LParen)
 }
 
 fn is_valid_name(text: &str) -> bool {
@@ -624,6 +648,63 @@ mod tests {
     fn union_with_trailing_comma_reports_missing_operand() {
         let err = parse("(A1,)").unwrap_err();
         assert_eq!(err.pos, 4);
+    }
+
+    #[test]
+    fn space_between_references_is_intersect() {
+        let expr = parse("A1:A10 A5:A15").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Intersect(
+                Box::new(Expr::Range(
+                    Box::new(Expr::Reference(parse_cell_ref("A1").unwrap())),
+                    Box::new(Expr::Reference(parse_cell_ref("A10").unwrap())),
+                )),
+                Box::new(Expr::Range(
+                    Box::new(Expr::Reference(parse_cell_ref("A5").unwrap())),
+                    Box::new(Expr::Reference(parse_cell_ref("A15").unwrap())),
+                )),
+            )
+        );
+        assert_eq!(canonical("A1:A10 A5:A15"), "=A1:A10 A5:A15");
+    }
+
+    #[test]
+    fn intersect_is_left_associative_and_chains() {
+        assert_eq!(canonical("A1 B1 C1"), "=A1 B1 C1");
+    }
+
+    #[test]
+    fn intersect_binds_tighter_than_unary_minus() {
+        // "-A1 B1" negates the whole intersection, not just A1: unary minus
+        // is looser than the reference operators.
+        let expr = parse("-A1 B1").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Unary(UnaryOp::Neg, Box::new(Expr::Intersect(
+                Box::new(Expr::Reference(parse_cell_ref("A1").unwrap())),
+                Box::new(Expr::Reference(parse_cell_ref("B1").unwrap())),
+            )))
+        );
+        assert_eq!(canonical("-A1 B1"), "=-A1 B1");
+    }
+
+    #[test]
+    fn intersect_can_appear_as_a_function_argument() {
+        assert_eq!(canonical("sum(a1:a10 a5:a15)"), "=SUM(A1:A10 A5:A15)");
+    }
+
+    #[test]
+    fn plain_juxtaposed_numbers_are_still_trailing_input_not_intersect() {
+        // Numbers aren't references, so a bare space between two of them
+        // must stay a syntax error rather than silently becoming an operator.
+        let err = parse("1 2").unwrap_err();
+        assert_eq!(err.pos, 2);
+    }
+
+    #[test]
+    fn intersect_can_combine_with_range_and_union() {
+        assert_eq!(canonical("(A1:A10 A5:A15, B1)"), "=(A1:A10 A5:A15, B1)");
     }
 }
 
