@@ -53,6 +53,7 @@ pub enum Expr {
     Number(f64),
     Text(String),
     Boolean(bool),
+    Error(String),
     Name(String),
     Reference(CellRef),
     Range(Box<Expr>, Box<Expr>),
@@ -251,6 +252,10 @@ impl Parser {
             TokenKind::Text(s) => {
                 self.advance();
                 Ok(Expr::Text(s))
+            }
+            TokenKind::Error(s) => {
+                self.advance();
+                Ok(Expr::Error(s))
             }
             TokenKind::LParen => {
                 self.advance();
@@ -706,6 +711,37 @@ mod tests {
     fn intersect_can_combine_with_range_and_union() {
         assert_eq!(canonical("(A1:A10 A5:A15, B1)"), "=(A1:A10 A5:A15, B1)");
     }
+
+    #[test]
+    fn error_literals_parse_and_round_trip() {
+        for literal in ["#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#N/A", "#NUM!", "#GETTING_DATA!"] {
+            assert_eq!(parse(literal).unwrap(), Expr::Error(literal.to_string()));
+            assert_eq!(canonical(literal), format!("={}", literal));
+        }
+    }
+
+    #[test]
+    fn error_literals_are_case_insensitive_but_canonicalize_uppercase() {
+        assert_eq!(canonical("#ref!"), "=#REF!");
+        assert_eq!(canonical("#value!"), "=#VALUE!");
+    }
+
+    #[test]
+    fn error_literal_can_appear_inside_an_expression() {
+        assert_eq!(canonical("IF(A1>0,A1,#N/A)"), "=IF(A1>0, A1, #N/A)");
+    }
+
+    #[test]
+    fn unknown_error_literal_is_rejected() {
+        let err = parse("#FOO!").unwrap_err();
+        assert_eq!(err.pos, 0);
+    }
+
+    #[test]
+    fn bare_hash_with_no_matching_literal_is_rejected() {
+        let err = parse("1+#").unwrap_err();
+        assert_eq!(err.pos, 2);
+    }
 }
 
 fn describe(kind: &TokenKind) -> String {
@@ -714,6 +750,7 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::Text(s) => format!("\"{}\"", s),
         TokenKind::Ident(s) => s.clone(),
         TokenKind::SheetName(s) => format!("'{}'", s),
+        TokenKind::Error(s) => s.clone(),
         TokenKind::Plus => "+".to_string(),
         TokenKind::Minus => "-".to_string(),
         TokenKind::Star => "*".to_string(),

@@ -7,6 +7,7 @@ pub enum TokenKind {
     Text(String),
     Ident(String),
     SheetName(String),
+    Error(String),
     Plus,
     Minus,
     Star,
@@ -102,6 +103,9 @@ impl Lexer {
         }
         if c == '\'' {
             return self.lex_sheet_name(start).map(|t| Token { space_before, ..t });
+        }
+        if c == '#' {
+            return self.lex_error(start).map(|t| Token { space_before, ..t });
         }
         if c.is_ascii_digit() || (c == '.' && matches!(self.peek_at(1), Some(d) if d.is_ascii_digit()))
         {
@@ -205,6 +209,35 @@ impl Lexer {
             }
         }
         Ok(Token { kind: TokenKind::SheetName(value), pos: start, space_before: false })
+    }
+
+    // Error literals are one of a fixed set of spellings (#REF!, #DIV/0!,
+    // ...), not a general token shape, so this just tries each known
+    // spelling case-insensitively rather than lexing a run of characters.
+    fn lex_error(&mut self, start: usize) -> Result<Token, LexError> {
+        const LITERALS: &[&str] = &[
+            "#GETTING_DATA!",
+            "#DIV/0!",
+            "#VALUE!",
+            "#NULL!",
+            "#NAME?",
+            "#NUM!",
+            "#REF!",
+            "#N/A",
+        ];
+        for literal in LITERALS {
+            let len = literal.chars().count();
+            let candidate: String = self.chars[self.pos..].iter().take(len).collect();
+            if candidate.eq_ignore_ascii_case(literal) {
+                self.pos += len;
+                return Ok(Token {
+                    kind: TokenKind::Error(literal.to_string()),
+                    pos: start,
+                    space_before: false,
+                });
+            }
+        }
+        Err(LexError { message: "unknown error literal".to_string(), pos: start })
     }
 
     fn lex_number(&mut self, start: usize) -> Result<Token, LexError> {

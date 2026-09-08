@@ -66,10 +66,12 @@ hand-written lexer, parser, and JSON serializer.
   (`(A1:A2,B1:B2)`), including as a function argument (`SUM((A1:A2,B1:B2))`)
 - Function calls with comma-separated arguments
 - Defined names (any identifier that isn't a valid cell reference)
+- Error literals (`#NULL!`, `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#N/A`,
+  `#NUM!`, `#GETTING_DATA!`), matched case-insensitively and canonicalized
+  to uppercase
 
 ## What's not there yet
 
-- Error literals (`#REF!`, `#VALUE!`, ...)
 - Array literals (`{1,2;3,4}`)
 - An actual evaluator - this only validates and reformats, it doesn't
   compute a value

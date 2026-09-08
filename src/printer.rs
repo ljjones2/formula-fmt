@@ -18,6 +18,7 @@ pub fn render(expr: &Expr) -> String {
                 "FALSE".to_string()
             }
         }
+        Expr::Error(e) => e.clone(),
         Expr::Name(n) => n.clone(),
         Expr::Reference(r) => render_ref(r),
         Expr::Range(a, b) => format!("{}:{}", print_child(a, 9, false), print_child(b, 9, false)),
@@ -183,6 +184,11 @@ fn write_json(expr: &Expr, out: &mut String) {
         Expr::Boolean(b) => {
             out.push_str("{\"type\":\"boolean\",\"value\":");
             out.push_str(if *b { "true" } else { "false" });
+            out.push('}');
+        }
+        Expr::Error(e) => {
+            out.push_str("{\"type\":\"error\",\"value\":");
+            push_json_string(out, e);
             out.push('}');
         }
         Expr::Name(n) => {
