@@ -29,6 +29,13 @@ pub fn render(expr: &Expr) -> String {
             let rendered: Vec<String> = items.iter().map(render).collect();
             format!("({})", rendered.join(", "))
         }
+        Expr::Array(rows) => {
+            let rendered_rows: Vec<String> = rows
+                .iter()
+                .map(|row| row.iter().map(render).collect::<Vec<_>>().join(", "))
+                .collect();
+            format!("{{{}}}", rendered_rows.join("; "))
+        }
         Expr::Unary(op, inner) => match op {
             UnaryOp::Neg => format!("-{}", print_child(inner, 7, false)),
             UnaryOp::Pos => format!("+{}", print_child(inner, 7, false)),
@@ -233,6 +240,23 @@ fn write_json(expr: &Expr, out: &mut String) {
                     out.push(',');
                 }
                 write_json(item, out);
+            }
+            out.push_str("]}");
+        }
+        Expr::Array(rows) => {
+            out.push_str("{\"type\":\"array\",\"rows\":[");
+            for (i, row) in rows.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push('[');
+                for (j, item) in row.iter().enumerate() {
+                    if j > 0 {
+                        out.push(',');
+                    }
+                    write_json(item, out);
+                }
+                out.push(']');
             }
             out.push_str("]}");
         }

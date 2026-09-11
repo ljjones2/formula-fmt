@@ -59,6 +59,7 @@ pub enum Expr {
     Range(Box<Expr>, Box<Expr>),
     Intersect(Box<Expr>, Box<Expr>),
     Union(Vec<Expr>),
+    Array(Vec<Vec<Expr>>),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
@@ -285,8 +286,110 @@ impl Parser {
                 self.expect(TokenKind::Bang)?;
                 self.parse_reference_after_bang(name)
             }
+            TokenKind::LBrace => self.parse_array(),
             _ => Err(ParseError {
                 message: format!("expected a value, found '{}'", describe(&token.kind)),
+                pos: token.pos,
+            }),
+        }
+    }
+
+    // Array literals hold only constants - numbers (optionally negated),
+    // text, booleans and error values - never cell references or formulas.
+    // Rows are separated by ';', columns within a row by ','.
+    fn parse_array(&mut self) -> Result<Expr, ParseError> {
+        let brace_pos = self.peek().pos;
+        self.advance(); // consume '{'
+        let mut rows = vec![Vec::new()];
+        loop {
+            rows.last_mut().unwrap().push(self.parse_array_element()?);
+            match self.peek().kind {
+                TokenKind::Comma => {
+                    self.advance();
+                }
+                TokenKind::Semicolon => {
+                    self.advance();
+                    rows.push(Vec::new());
+                }
+                TokenKind::RBrace => {
+                    self.advance();
+                    break;
+                }
+                _ => {
+                    return Err(ParseError {
+                        message: format!(
+                            "expected ',', ';' or '}}' in array literal, found '{}'",
+                            describe(&self.peek().kind)
+                        ),
+                        pos: self.peek().pos,
+                    })
+                }
+            }
+        }
+        let width = rows[0].len();
+        if rows.iter().any(|row| row.len() != width) {
+            return Err(ParseError {
+                message: "array literal rows must all be the same length".to_string(),
+                pos: brace_pos,
+            });
+        }
+        Ok(Expr::Array(rows))
+    }
+
+    fn parse_array_element(&mut self) -> Result<Expr, ParseError> {
+        let negative = self.peek().kind == TokenKind::Minus;
+        if negative {
+            self.advance();
+        }
+        let token = self.peek().clone();
+        if negative {
+            return match token.kind {
+                TokenKind::Number(n) => {
+                    self.advance();
+                    Ok(Expr::Number(-n))
+                }
+                _ => Err(ParseError {
+                    message: format!(
+                        "expected a number after '-' in array literal, found '{}'",
+                        describe(&token.kind)
+                    ),
+                    pos: token.pos,
+                }),
+            };
+        }
+        match token.kind {
+            TokenKind::Number(n) => {
+                self.advance();
+                Ok(Expr::Number(n))
+            }
+            TokenKind::Text(s) => {
+                self.advance();
+                Ok(Expr::Text(s))
+            }
+            TokenKind::Error(s) => {
+                self.advance();
+                Ok(Expr::Error(s))
+            }
+            TokenKind::Ident(name) => {
+                let upper = name.to_ascii_uppercase();
+                if upper == "TRUE" {
+                    self.advance();
+                    Ok(Expr::Boolean(true))
+                } else if upper == "FALSE" {
+                    self.advance();
+                    Ok(Expr::Boolean(false))
+                } else {
+                    Err(ParseError {
+                        message: format!("'{}' is not a valid array literal element", name),
+                        pos: token.pos,
+                    })
+                }
+            }
+            _ => Err(ParseError {
+                message: format!(
+                    "expected an array literal element, found '{}'",
+                    describe(&token.kind)
+                ),
                 pos: token.pos,
             }),
         }
@@ -742,6 +845,59 @@ mod tests {
         let err = parse("1+#").unwrap_err();
         assert_eq!(err.pos, 2);
     }
+
+    #[test]
+    fn array_literal_parses_rows_and_columns() {
+        let expr = parse("{1,2;3,4}").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Array(vec![
+                vec![Expr::Number(1.0), Expr::Number(2.0)],
+                vec![Expr::Number(3.0), Expr::Number(4.0)],
+            ])
+        );
+        assert_eq!(canonical("{1,2;3,4}"), "={1, 2; 3, 4}");
+    }
+
+    #[test]
+    fn array_literal_single_row_round_trips() {
+        assert_eq!(canonical("{1,2,3}"), "={1, 2, 3}");
+    }
+
+    #[test]
+    fn array_literal_allows_negative_numbers_text_and_booleans() {
+        let expr = parse("{-1,\"a\";TRUE,FALSE}").unwrap();
+        assert_eq!(
+            expr,
+            Expr::Array(vec![
+                vec![Expr::Number(-1.0), Expr::Text("a".to_string())],
+                vec![Expr::Boolean(true), Expr::Boolean(false)],
+            ])
+        );
+    }
+
+    #[test]
+    fn array_literal_can_appear_as_a_function_argument() {
+        assert_eq!(canonical("sum({1,2,3})"), "=SUM({1, 2, 3})");
+    }
+
+    #[test]
+    fn array_literal_rejects_ragged_rows() {
+        let err = parse("{1,2;3}").unwrap_err();
+        assert_eq!(err.pos, 0);
+    }
+
+    #[test]
+    fn array_literal_rejects_cell_references() {
+        let err = parse("{A1}").unwrap_err();
+        assert_eq!(err.pos, 1);
+    }
+
+    #[test]
+    fn array_literal_rejects_negative_text() {
+        let err = parse("{-\"a\"}").unwrap_err();
+        assert_eq!(err.pos, 2);
+    }
 }
 
 fn describe(kind: &TokenKind) -> String {
@@ -766,7 +922,10 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::Ge => ">=".to_string(),
         TokenKind::LParen => "(".to_string(),
         TokenKind::RParen => ")".to_string(),
+        TokenKind::LBrace => "{".to_string(),
+        TokenKind::RBrace => "}".to_string(),
         TokenKind::Comma => ",".to_string(),
+        TokenKind::Semicolon => ";".to_string(),
         TokenKind::Colon => ":".to_string(),
         TokenKind::Bang => "!".to_string(),
         TokenKind::Eof => "end of formula".to_string(),

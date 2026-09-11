@@ -69,9 +69,11 @@ hand-written lexer, parser, and JSON serializer.
 - Error literals (`#NULL!`, `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#N/A`,
   `#NUM!`, `#GETTING_DATA!`), matched case-insensitively and canonicalized
   to uppercase
+- Array literals (`{1,2;3,4}`), rows separated by `;` and columns by `,`,
+  holding only constants - numbers (optionally negated), text, booleans,
+  and error values, never cell references or nested formulas
 
 ## What's not there yet
 
-- Array literals (`{1,2;3,4}`)
 - An actual evaluator - this only validates and reformats, it doesn't
   compute a value
