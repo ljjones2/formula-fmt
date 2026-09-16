@@ -162,7 +162,7 @@ fn sheet_name_needs_quotes(name: &str) -> bool {
     !chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
-fn format_number(n: f64) -> String {
+pub(crate) fn format_number(n: f64) -> String {
     if n == n.trunc() && n.abs() < 1e15 {
         format!("{}", n as i64)
     } else {

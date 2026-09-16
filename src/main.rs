@@ -1,3 +1,4 @@
+mod eval;
 mod lexer;
 mod parser;
 mod printer;
@@ -8,11 +9,14 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let mut json_output = false;
+    let mut eval_output = false;
     let mut formula_arg: Option<String> = None;
 
     for arg in env::args().skip(1) {
         if arg == "--json" {
             json_output = true;
+        } else if arg == "--eval" {
+            eval_output = true;
         } else if arg == "--help" || arg == "-h" {
             print_usage();
             return ExitCode::SUCCESS;
@@ -57,11 +61,29 @@ fn main() -> ExitCode {
                 printer::push_json_string(&mut out, &canonical);
                 out.push_str(",\"ast\":");
                 out.push_str(&printer::to_json(&expr));
+                if eval_output {
+                    match eval::eval(&expr) {
+                        Ok(value) => {
+                            out.push_str(",\"value\":");
+                            out.push_str(&eval::to_json(&value));
+                        }
+                        Err(unsupported) => {
+                            out.push_str(",\"value\":null,\"valueError\":");
+                            printer::push_json_string(&mut out, &unsupported.message());
+                        }
+                    }
+                }
                 out.push('}');
                 println!("{}", out);
             } else {
                 println!("valid");
                 println!("{}", canonical);
+                if eval_output {
+                    match eval::eval(&expr) {
+                        Ok(value) => println!("value: {}", describe_value(&value)),
+                        Err(unsupported) => println!("value: {}", unsupported.message()),
+                    }
+                }
             }
             ExitCode::SUCCESS
         }
@@ -86,14 +108,25 @@ fn main() -> ExitCode {
     }
 }
 
+fn describe_value(value: &eval::Value) -> String {
+    match value {
+        eval::Value::Number(n) => printer::format_number(*n),
+        eval::Value::Text(s) => format!("\"{}\"", s),
+        eval::Value::Boolean(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
+        eval::Value::Error(e) => e.clone(),
+    }
+}
+
 fn print_usage() {
     println!("formula-fmt - validate and pretty-print spreadsheet formulas");
     println!();
     println!("usage:");
     println!("  formula-fmt \"=SUM(A1:A10)*2\"");
     println!("  echo \"=A1+B1\" | formula-fmt --json");
+    println!("  formula-fmt --eval \"=1+2*3\"");
     println!();
     println!("options:");
     println!("  --json    emit machine-readable JSON instead of plain text");
+    println!("  --eval    also compute and print the value (constant expressions only)");
     println!("  --help    show this message");
 }

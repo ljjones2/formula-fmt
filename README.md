@@ -36,6 +36,16 @@ error at position 5: expected a value, found 'end of formula'
 
 $ echo '=a1+$B$2^-2' | formula-fmt --json
 {"valid":true,"input":"=a1+$B$2^-2","canonical":"=A1+$B$2^-2","ast":{"type":"binary","op":"add","left":{"type":"reference","sheet":null,"column":"A","row":1,"colAbsolute":false,"rowAbsolute":false},"right":{"type":"binary","op":"pow","left":{"type":"reference","sheet":null,"column":"B","row":2,"colAbsolute":true,"rowAbsolute":true},"right":{"type":"unary","op":"neg","operand":{"type":"number","value":2}}}}}
+
+$ formula-fmt --eval "=1+2*3"
+valid
+=1+2*3
+value: 7
+
+$ formula-fmt --eval "=A1+1"
+valid
+=A1+1
+value: evaluation of cell references is not supported yet
 ```
 
 If no formula argument is given, `formula-fmt` reads one line from stdin.
@@ -73,7 +83,17 @@ hand-written lexer, parser, and JSON serializer.
   holding only constants - numbers (optionally negated), text, booleans,
   and error values, never cell references or nested formulas
 
+## Evaluating
+
+`--eval` computes a value for the constant-expression subset: arithmetic,
+comparisons, concatenation, and the unary operators, with the same type
+coercion spreadsheets use (text that looks numeric coerces in arithmetic,
+booleans count as 1/0, an error operand short-circuits the whole
+expression). Cell references, defined names, function calls, ranges, and
+the reference operators report as unsupported instead of guessing, since
+there's no workbook to pull values from yet.
+
 ## What's not there yet
 
-- An actual evaluator - this only validates and reformats, it doesn't
-  compute a value
+- A workbook/grid data source, so `--eval` can resolve cell references,
+  defined names, and function calls instead of reporting them unsupported
