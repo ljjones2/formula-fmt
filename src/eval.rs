@@ -1,16 +1,18 @@
 // Evaluates a parsed formula to a scalar value.
 //
-// This covers the constant-expression subset: literals, arithmetic,
+// This covers the constant-expression subset - literals, arithmetic,
 // comparison, concatenation, and the unary operators, following the type
 // coercion and error-propagation rules spreadsheets use (text coerces to
 // number where possible, booleans count as 1/0 in arithmetic, an error
-// operand short-circuits the whole expression). Cell references, defined
-// names, function calls, ranges, and the reference operators all depend on
-// a workbook to look values up in, which doesn't exist yet, so those report
-// Unsupported rather than guessing at a value.
+// operand short-circuits the whole expression) - plus cell references and
+// defined names, resolved against a `Workbook` supplied by the caller.
+// Ranges, function calls, and the reference operators still depend on
+// features that don't exist yet (a function library, multi-cell results),
+// so those report Unsupported rather than guessing at a value.
 
 use crate::parser::{BinaryOp, Expr, UnaryOp};
 use crate::printer::{format_number, push_json_string};
+use crate::workbook::Workbook;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -29,16 +31,18 @@ impl Unsupported {
     }
 }
 
-pub fn eval(expr: &Expr) -> Result<Value, Unsupported> {
+pub fn eval(expr: &Expr, workbook: &Workbook) -> Result<Value, Unsupported> {
     match expr {
         Expr::Number(n) => Ok(Value::Number(*n)),
         Expr::Text(s) => Ok(Value::Text(s.clone())),
         Expr::Boolean(b) => Ok(Value::Boolean(*b)),
         Expr::Error(e) => Ok(Value::Error(e.clone())),
-        Expr::Unary(op, inner) => Ok(eval_unary(op, eval(inner)?)),
-        Expr::Binary(op, left, right) => Ok(eval_binary(op, eval(left)?, eval(right)?)),
-        Expr::Name(_) => Err(Unsupported("defined names")),
-        Expr::Reference(_) => Err(Unsupported("cell references")),
+        Expr::Unary(op, inner) => Ok(eval_unary(op, eval(inner, workbook)?)),
+        Expr::Binary(op, left, right) => {
+            Ok(eval_binary(op, eval(left, workbook)?, eval(right, workbook)?))
+        }
+        Expr::Name(name) => workbook.get_name(name).ok_or(Unsupported("defined names")),
+        Expr::Reference(cell) => Ok(workbook.get_cell(cell.sheet.as_deref(), &cell.column, cell.row)),
         Expr::Range(..) => Err(Unsupported("ranges")),
         Expr::Intersect(..) => Err(Unsupported("the intersect operator")),
         Expr::Union(..) => Err(Unsupported("the union operator")),
@@ -185,7 +189,7 @@ mod tests {
     use crate::parser::parse;
 
     fn eval_str(input: &str) -> Value {
-        eval(&parse(input).unwrap()).unwrap()
+        eval(&parse(input).unwrap(), &Workbook::new()).unwrap()
     }
 
     #[test]
@@ -247,14 +251,43 @@ mod tests {
     }
 
     #[test]
-    fn cell_references_are_reported_as_unsupported() {
-        let err = eval(&parse("A1+1").unwrap()).unwrap_err();
-        assert_eq!(err, Unsupported("cell references"));
+    fn unset_cell_reference_reads_as_zero() {
+        assert_eq!(eval_str("A1+1"), Value::Number(1.0));
+    }
+
+    #[test]
+    fn cell_reference_resolves_from_workbook() {
+        let mut wb = Workbook::new();
+        wb.set_cell(None, "A", 1, Value::Number(41.0));
+        assert_eq!(eval(&parse("A1+1").unwrap(), &wb).unwrap(), Value::Number(42.0));
+    }
+
+    #[test]
+    fn sheet_qualified_reference_resolves_from_workbook() {
+        let mut wb = Workbook::new();
+        wb.set_cell(Some("Sheet1"), "A", 1, Value::Number(7.0));
+        assert_eq!(
+            eval(&parse("Sheet1!A1").unwrap(), &wb).unwrap(),
+            Value::Number(7.0)
+        );
+    }
+
+    #[test]
+    fn defined_name_resolves_from_workbook() {
+        let mut wb = Workbook::new();
+        wb.set_name("Total", Value::Number(100.0));
+        assert_eq!(eval(&parse("Total+1").unwrap(), &wb).unwrap(), Value::Number(101.0));
+    }
+
+    #[test]
+    fn unset_defined_name_is_reported_as_unsupported() {
+        let err = eval(&parse("Total").unwrap(), &Workbook::new()).unwrap_err();
+        assert_eq!(err, Unsupported("defined names"));
     }
 
     #[test]
     fn function_calls_are_reported_as_unsupported() {
-        let err = eval(&parse("SUM(1,2)").unwrap()).unwrap_err();
+        let err = eval(&parse("SUM(1,2)").unwrap(), &Workbook::new()).unwrap_err();
         assert_eq!(err, Unsupported("function calls"));
     }
 }

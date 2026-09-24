@@ -42,10 +42,15 @@ valid
 =1+2*3
 value: 7
 
-$ formula-fmt --eval "=A1+1"
+$ formula-fmt --eval --set A1=5 --set B1=7 "=A1+B1"
 valid
-=A1+1
-value: evaluation of cell references is not supported yet
+=A1+B1
+value: 12
+
+$ formula-fmt --eval "=SUM(A1:A10)"
+valid
+=SUM(A1:A10)
+value: evaluation of function calls is not supported yet
 ```
 
 If no formula argument is given, `formula-fmt` reads one line from stdin.
@@ -85,15 +90,30 @@ hand-written lexer, parser, and JSON serializer.
 
 ## Evaluating
 
-`--eval` computes a value for the constant-expression subset: arithmetic,
-comparisons, concatenation, and the unary operators, with the same type
-coercion spreadsheets use (text that looks numeric coerces in arithmetic,
-booleans count as 1/0, an error operand short-circuits the whole
-expression). Cell references, defined names, function calls, ranges, and
-the reference operators report as unsupported instead of guessing, since
-there's no workbook to pull values from yet.
+`--eval` computes a value for arithmetic, comparisons, concatenation, and
+the unary operators, with the same type coercion spreadsheets use (text
+that looks numeric coerces in arithmetic, booleans count as 1/0, an error
+operand short-circuits the whole expression). Cell references and defined
+names resolve against an in-memory workbook built from `--set` flags:
+
+```
+$ formula-fmt --eval --set A1=5 --set Total=A1*2 "=Total+1"
+valid
+=Total+1
+value: 11
+```
+
+`--set TARGET=VALUE` is repeatable; `TARGET` is a cell reference or a
+defined name, `VALUE` is any formula expression, evaluated against the
+workbook built from the `--set` flags seen so far, so later assignments
+can reference earlier ones. A cell that's never set reads as 0, matching
+how spreadsheets treat a blank cell in arithmetic. Function calls, ranges,
+and the reference operators still report as unsupported instead of
+guessing, since there's no function library or multi-cell result type yet.
 
 ## What's not there yet
 
-- A workbook/grid data source, so `--eval` can resolve cell references,
-  defined names, and function calls instead of reporting them unsupported
+- A function library (`SUM`, `IF`, and the rest), so `--eval` can resolve
+  function calls instead of reporting them unsupported
+- Range and array evaluation, so a formula can produce more than one
+  scalar value
